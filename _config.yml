@@ -22,7 +22,8 @@ title: Ramblings from Despire.
 email: matus.mrekaj@icloud.com
 description: >- # this means to ignore newlines until "baseurl:"
     Documenting my learning journey by writing down my ramblings
-baseurl: "" # the subpath of your site, e.g. /blog
+baseurl: "https://github.com/Despire/despire.github.io" # the subpath of your site, e.g. /blog
+domain: "despire.github.io"
 url: "https://despire.github.io" # the base hostname & protocol for your site, e.g. http://example.com
 twitter_username: despire_z
 github_username:  despire
