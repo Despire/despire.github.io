@@ -18,10 +18,10 @@
 # You can create any custom variable you would like, and they will be accessible
 # in the templates via {{ site.myvariable }}.
 
-title: Ramblings from Despire.
+title: ""
 email: matus.mrekaj@icloud.com
 description: >- # this means to ignore newlines until "baseurl:"
-    Documenting my learning journey by writing down my ramblings
+    Tinkering with computers.
 baseurl: "" # the subpath of your site, e.g. /blog
 domain: "despire.github.io"
 url: "https://despire.github.io" # the base hostname & protocol for your site, e.g. http://example.com
@@ -30,7 +30,6 @@ github_username:  despire
 
 # Build settings
 theme: minima
-skin: solarized
 plugins:
   - jekyll-feed
 
