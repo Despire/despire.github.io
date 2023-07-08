@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Writing an IP based rate limiter"
-data: 2021-10-11
+date: 2021-10-11
 categories: [Tech]
 ---
 # What is a Rate Limiter ?
