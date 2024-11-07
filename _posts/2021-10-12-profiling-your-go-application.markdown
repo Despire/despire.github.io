@@ -5,7 +5,7 @@ date: 2021-10-12
 categories: [Tech]
 ---
 If you don't know what profiling means/is you can read about it on
-[Wikipedia](https://en.wikipedia.org/wiki/Profiling_(computer_programming), as the concept is described there very well.
+[Wikipedia](https://en.wikipedia.org/wiki/Profiling_(computer_programming)), as the concept is described there very well.
 
 # Profiling in Go
 
