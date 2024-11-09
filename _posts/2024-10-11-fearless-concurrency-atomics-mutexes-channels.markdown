@@ -139,7 +139,7 @@ goroutine 8 end
 A go [proverb](https://go-proverbs.github.io/) everyone who writes Go should know. Channels and goroutines are the primitives
 for concurrency in Go. Goroutines are lightweight threads that are scheduled for execution by the runtime scheduler. Goroutines are
 are not the same as OS threads, and in fact the runtime operates with a number of OS threads on which these goroutines are scheduled for 
-execution, thus a goroutine is scheduled for execution based on the number of available CPUs and a set of goroutines can be executed in parallel if the hardware is capable of parallel execution. Some of the key points to know about goroutines are:
+execution, thus a goroutine is scheduled for execution based on the number of available OS Threads and a set of goroutines can be executed in parallel if the hardware is capable of parallel execution. Some of the key points to know about goroutines are:
 
 - Cheap to create: A program can spawn thousands of goroutines that are scheduled by the runtime on the number of available OS threads, thus having an M:N model.
 - Better performance compared to OS Threads: Creating and destroying hundreds to thousands of goroutines is faster and more performant than compared to OS Threads.
@@ -152,7 +152,7 @@ go handleWork()
 ```
 
 
-By spawning goroutines we need a way to signal/communicate between them. This is where Channels come in. Channels are a key feature of the Go programming language that makes Go the concurrent programming language that it is. Channels are a communication medium for multiple goroutines to share memory by communicating with each other, rather than sharing memory directly between each of them to communicate a model of model of communicating sequential processes[^3]. Creating channels in go is straighforward:
+By spawning goroutines we need a way to signal/communicate between them. This is where Channels come in. Channels are a key feature of the Go programming language that makes Go the concurrent programming language that it is. Channels are a communication medium for multiple goroutines to share memory by communicating with each other, rather than sharing memory directly between each of them to communicate, a model of communicating sequential processes[^3]. Creating channels in go is straighforward:
 
 ```go
 chan := make(chan struct{})
@@ -183,7 +183,7 @@ func f1() <-chan struct{} {} // returns a read-only channel
 func f2() chan<- struct{} {} // returns a write-only channel
 ```
 
-To streamline working with multiple goroutines at once, go also provides the `select{}` statement as part of the language. Select behaves like a switch statement, but only works with channels. It blocks until one of the used channels is ready, or if none are ready and the default case is present, it executes the default case.
+To streamline working with multiple goroutines at once, go also provides the `select{}` statement as part of the language. Select behaves like a switch statement, but only works with channels. It blocks until one of the used channels is ready, or if none are ready and the default case is present it executes the default case.
 
 ```go
 select{
@@ -269,15 +269,133 @@ val: 9
 ```
 
 As useful as these concurrency primitives are, you should not overuse them just because the language offers them to you. You should be
-able to identify the problem you face and choose the right tool for the job. Therefore, the next section describes other synchronization primitives that can be used in conjunction.
+able to identify the problem you face and choose the right tool for the job. Therefore, the next two sections describes other synchronization primitives that can be used in conjunction.
 
-# Mutexes, Atomics, Conditions
+# Mutexes, Atomics
+
+If you are accessing a single resource from multiple goroutines that can run in parallel, and there is at least 1 modifier and reader of the resource, you need to synchronize access to that resource. If we don't need communication between the goroutines, using channels, depending on what needs to be done to the resource before another goroutine gets access to it, you can either use a mutex (short for mutual exclusion) or an atomic variable.
+
+Looking at it a bit differently, this shared resource can be thought of as just memory that you want to synchronize access to. For example, the highlighted area in the next figure would be the memory we want to guard or synchronize access to so that no race condition occurs.
+
+![alt text](/assets/img/concurrency/memory.png)
+
+Whether to use a mutex or an atomic variable depends on how exactly you want to protect this region of memory from multiple goroutines.
+
+A mutex (`sync.Mutex` in go) has only two methods, `Lock()` and `Unlock()`. When a goroutine acquires a lock, it now has exclusive access to that region of memory and is free to perform whatever transformations are needed on it; this is also referred to as the critical section that the mutex guards. Once a lock is acquired, it prevents any other goroutine from acquiring it until the lock is released. 
+
+```go
+m := &sync.Mutex{}
+
+...
+
+m.Lock() // start of critical section.
+
+// perform operations needed to modify the guarded area.
+...
+
+m.Unlock() // end of critical section.
+```
+
+The two methods provided by a mutex define the span of the critical section. Depending on how large the span of the critical section is, and how many goroutines occupy that path, contention can occur and affect the performance of the program. It is important to keep the critical section as small as possible and to design the program to avoid high contention for a shared resource. Locking itself is not expensive in terms of CPU cycles, contention is.
+
+Atomics, on the other hand, do not have the ability to define a critical section that mutexes provide, though it is possible to implement them using just these atomic variables. When a variable is atomic, it guarantees that writes and reads are performed atomically, so that multiple goroutines always work with the most recent version of the variable enabling lock-free programming techniques that do not have lock contention. Atomics in go have the following 4 methods by default, with some additional ones depending on what the atomic type is, all of which are executed atomically and are the building blocks for lock-free data structures and programming.
+
+```go
+Store(new) // atomically stores value into the memory.
+Load() // atomically loads value from the memery.
+CompareAndSwap(old, new) // compares if the memory still holds the old value, if so swaps it with the new value.
+Swap(new) // swaps the old value with the new value.
+```
+
+Using `CompareAndSwap()` can be a powerful instruction in lock-free programming. For example, below it is used to implement a SpinLock[^4] that mimics the properties of a mutex.
+
+```go
+type SpinLock struct {
+	l int32
+}
+
+func (l *SpinLock) Lock() {
+	for !atomic.CompareAndSwapInt32(&l.l, 0, 1) {
+	}
+}
+
+func (l *SpinLock) Unlock() {
+	atomic.StoreInt32(&l.l, 0)
+}
+```
+
+When to use a mutex?
+
+- You need to perform multiple operations that need to be treated as a single "atomic" operation before another goroutine is granted access.
+- Ensure consistency for data structures accessed by multiple goroutines.
+
+When to use an atomic?
+
+- When using primitive data types.
+- Minimize lock contention, resulting in better performance, lock-free programming.
+- Useful for counters or flags.
+
+
+# Conditions
+
+The `sync.Cond` type in Go is a bit controversial, as it's place in the program would have to be really justified to be used correctly,
+with all the previous primitives available, especially channels. There has even been a proposal to the Go programming language to get rid of [`sync.Cond`](https://github.com/golang/go/issues/21165), which was recently categorized as a likely denial, so the type is here to stay.
+
+Condition are something like channels but on a way lower level and are used in conjuction with a Mutex. They're primarly used for signaling the occurence of an event for the coordination of multiple goroutines. The following methods are available:
+
+- `Wait()`: Suspends the calling goroutine until another goroutine signals the condition variable.
+- `Signal()`: Wakes up one waiting goroutine.
+- `Broadcast()`: Wakes up all waiting goroutines.
+
+Below is a simple example that demonstrates how to unblock a goroutine that is waiting for a particular event.
+
+```go
+func main() {
+    m := &sync.Mutex{}
+    c := sync.NewCond(m)
+
+    var event bool
+
+    go func() {
+        c.L.Lock()
+        for !event {
+            c.Wait()
+        }
+        fmt.Printf("Condition met processing data...\n")
+        time.Sleep(3 * time.Second)
+        c.L.Unlock()
+    }()
+
+    c.L.Lock()
+    fmt.Printf("processing data...\n")
+    time.Sleep(2 * time.Second)
+    fmt.Printf("finished processing data, sending finish event\n")
+    event = true
+    c.L.Unlock()
+
+    c.Signal()
+
+    time.Sleep(1 * time.Second)
+}
+```
+
+The `sync.Cond` type should really be used in scenarios where fine-grained control over goroutine execution is required and the overhead of channels is a performance hit, but extra care should be taken as subtle bugs can be introduced if not used carefully.
 
 # Conclusion
+
 Go allows you to structure your programs to make effective use of concurrency models and to facilitate the scalability of your code by abstracting away the complexity of dealing with the lower-level instructions. In the case of synchronisation primitives for dealing with limited access to a shared resource, it is important to remember that locking is not expensive, contention is. Structuring your programs to allow high contention for shared resources will be the biggest bottleneck of your program, and you should aim to structure your program to minimise contention and maximise performance and scalability.
+
+# Further Reading
+
+Go's memory model
+- https://go.dev/ref/mem
+- https://www.cs.cmu.edu/afs/cs.cmu.edu/academic/class/15440-f11/go/doc/go_mem.html
+
+- [Communicating Sequential Processes](https://www.cs.cmu.edu/~crary/819-f09/Hoare78.pdf)
 
 **Footnotes**
 
 [^1]: [Rob Pike - From Parallel to Concurrent (Accessed 06 Nov 2024)](https://www.youtube.com/watch?v=iTrP_EmGNmw)
 [^2]: [Rob Pike - Concurrency is not Parallelism (Accessed 06 Nov 2024)](https://www.youtube.com/watch?v=oV9rvDllKEg)
 [^3]: [C.A.R. Hoare - Communicating Sequential Processes (Accessed 07 Nov 2024)](https://www.cs.cmu.edu/~crary/819-f09/Hoare78.pdf)
+[^4]: [Spin Lock (Accessed 09 Nov 2024)](https://en.wikipedia.org/wiki/Spinlock)
