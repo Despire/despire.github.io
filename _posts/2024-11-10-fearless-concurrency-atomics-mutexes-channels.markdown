@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Fearless Concurrency in Go: Atomics, Mutexes, Channels"
-date: 2024-10-11
+date: 2024-11-10
 categories: [Tech]
 ---
 
