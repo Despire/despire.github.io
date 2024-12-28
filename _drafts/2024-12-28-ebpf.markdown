@@ -54,15 +54,29 @@ In general, there are two ways to manage the lifecycle of an eBPF program. Run a
 Pinning refers to a concept where we essentially "pin" the map or program to the file system and thus keep the reference to the bpf objects alive as long as the computer is running, and avoid problems with unwanted process terminations/restarts.
 
 # Hello World
-Lets build an hello world eBPF program that prints every usage of the openat syscall.
+Lets build a hello world eBPF program that prints every use of the openat syscall.
 
-Setting up the development environment. To work with the kernel data structure without running into different kinds of collisions when importing header files, btftool[^3] provides useful utilities when working with eBPF programs including generating all the data structures used within the kernel that we can then import in our eBPF program.
+Setting up the development environment, by first downloading the necessary dependencies.
+
+```bash
+sudo apt install linux-headers-$(uname -r) \
+                 libbpfcc-dev \
+                 libbpf-dev \
+                 llvm \
+                 clang \
+                 gcc-multilib \
+                 build-essential \
+                 linux-tools-$(uname -r) \
+                 linux-tools-common \
+                 linux-tools-generic
+```
+To work with the kernel data structures without running into various kinds of naming collisions when importing header files, btftool[^3] provides useful utilities for working with eBPF programs, including generating all the data structures used in the kernel, which we can then import into our eBPF program.
 
 ```bash
 $ sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
 ```
 
-Next we find the trace hook point for the openat syscall
+Next we find the trace hook for the `openat` syscall
 
 ```bash
 $ sudo ls /sys/kernel/debug/tracing/events/syscalls/ | grep openat
@@ -72,7 +86,7 @@ sys_enter_openat
 ...
 ```
 
-further we also can figure out the arguments with
+next, we figure out the arguments with passed to the syscall
 
 ```bash
 sudo cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_openat/format
@@ -93,7 +107,7 @@ format:
 print fmt: "dfd: 0x%08lx, filename: 0x%08lx, flags: 0x%08lx, mode: 0x%08lx", ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned long)(REC->mode))
 ```
 
-The program will have two parts, the kernel-space and the user-space part. In order to exchange information between these two parts, a channel must be established with a common data structure that is known at compile time. We will create a file called `events.h` that will have the necessarity struct definitions.
+The program will have two parts, the kernel-space part and the user-space part. In order to exchange information between these two parts, a channel must be established with a common data structure that is known at compile time. We will create a file called `events.h' which will contain the necessary struct definitions, used by both parts of the program.
 
 ```c
 #ifndef EVENTS_H
@@ -109,8 +123,7 @@ struct event {
 #endif
 ```
 
-The next step is to write the kernel part of the eBPF program. The kernel contains much more code that we will look at in more detail. The kernel part file
-will be named `hello-world.bpf.c`, note the `.bpf` to indicate that it is an bpf program written in C, not a regular user space program.
+The next step is to write the kernel-space part of the eBPF program, the file will be named `hello-world.bpf.c`, note the `.bpf` to indicate that it is a bpf program written in C, not a regular user space program.
 
 ```c
 #include "vmlinux.h"
@@ -140,7 +153,7 @@ int openat(struct trace_event_raw_sys_enter *ctx) {
 }
 ```
 
-**NOTE:** the `SEC` macros you see in the kernel part of the eBPF program are sections that will be present within the compiled binary itself (we will come back to this later), we can use these section to identify which bpf objects are present in the binary.
+**NOTE:** The `SEC` macros you see will be translated to sections in the compiled binary itself (we will come back to this later), we can use these sections to identify which bpf objects are present in the binary.
 
 1. The program starts by including the generated "vmlinux.h" will all necessary kernel data structures which we then reference in the eBPF program.
 2. We define a map called `buffer` and give it a maximum of 1024 elements. Its type is `BPF_MAP_TYPE_RINGBUF`, which is a common mechanism to exchange
@@ -156,12 +169,275 @@ int openat(struct trace_event_raw_sys_enter *ctx) {
 
     **NOTE** that the filename is the second argument passed to the syscall, which we can also identify from the above information about the syscall dumped via `sudo cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_openat/format`, thus `ctx->args[1]` is used within the eBPF program.
 
-To wrap this up, we finish we the user-space part of the eBPF program.
+Before we get to the user-space part of the program, a few more steps will be discussed. Now that we have completed the kernel-space part, we can compile it down to the eBPF binary that can be run on the virtual machine. To do this, as mentioned before, we use clang.
+
+```bash
+clang -target bpf -c hello-world.bpf.c -O2 -g
+```
+
+- `-target bpf` specifies the target architecture to which the program will compile to.
+- `-c` Only run preprocess, compile, and assemble steps.
+- `-O2` is the optimization level.
+- `-g` tells clang to compile with debug information. This include the BTF information in the binary to be used with CO-RE.
+
+If we now inspect the generated binary, named `hello-world.bpf.o`
+
+```bash
+readelf -S hello-world.bpf.o 
+There are 27 section headers, starting at offset 0x14b0:
+
+Section Headers:
+  [Nr] Name              Type             Address           Offset
+       Size              EntSize          Flags  Link  Info  Align
+  [ 0]                   NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [ 1] .strtab           STRTAB           0000000000000000  00001383
+       000000000000012b  0000000000000000           0     0     1
+  [ 2] .text             PROGBITS         0000000000000000  00000040
+       0000000000000000  0000000000000000  AX       0     0     4
+  [ 3] tracepoint/s[...] PROGBITS         0000000000000000  00000040
+       00000000000000a8  0000000000000000  AX       0     0     8
+  [ 4] .reltracepoi[...] REL              0000000000000000  00000f40
+       0000000000000010  0000000000000010   I      26     3     8
+  [ 5] license           PROGBITS         0000000000000000  000000e8
+       0000000000000004  0000000000000000  WA       0     0     1
+  [ 6] .maps             PROGBITS         0000000000000000  000000f0
+       0000000000000010  0000000000000000  WA       0     0     8
+  [ 7] .debug_loclists   PROGBITS         0000000000000000  00000100
+       0000000000000027  0000000000000000           0     0     1
+  [ 8] .debug_abbrev     PROGBITS         0000000000000000  00000127
+       000000000000011e  0000000000000000           0     0     1
+  [ 9] .debug_info       PROGBITS         0000000000000000  00000245
+       0000000000000217  0000000000000000           0     0     1
+  [10] .rel.debug_info   REL              0000000000000000  00000f50
+       0000000000000050  0000000000000010   I      26     9     8
+  [11] .debug_str_o[...] PROGBITS         0000000000000000  0000045c
+       0000000000000098  0000000000000000           0     0     1
+  [12] .rel.debug_s[...] REL              0000000000000000  00000fa0
+       0000000000000240  0000000000000010   I      26    11     8
+  [13] .debug_str        PROGBITS         0000000000000000  000004f4
+       00000000000001c0  0000000000000001  MS       0     0     1
+  [14] .debug_addr       PROGBITS         0000000000000000  000006b4
+       0000000000000020  0000000000000000           0     0     1
+  [15] .rel.debug_addr   REL              0000000000000000  000011e0
+       0000000000000030  0000000000000010   I      26    14     8
+  [16] .BTF              PROGBITS         0000000000000000  000006d4
+       00000000000004c2  0000000000000000           0     0     4
+  [17] .rel.BTF          REL              0000000000000000  00001210
+       0000000000000020  0000000000000010   I      26    16     8
+  [18] .BTF.ext          PROGBITS         0000000000000000  00000b98
+       00000000000000ec  0000000000000000           0     0     4
+  [19] .rel.BTF.ext      REL              0000000000000000  00001230
+       00000000000000b0  0000000000000010   I      26    18     8
+  [20] .debug_frame      PROGBITS         0000000000000000  00000c88
+       0000000000000028  0000000000000000           0     0     8
+  [21] .rel.debug_frame  REL              0000000000000000  000012e0
+       0000000000000020  0000000000000010   I      26    20     8
+  [22] .debug_line       PROGBITS         0000000000000000  00000cb0
+       00000000000000b8  0000000000000000           0     0     1
+  [23] .rel.debug_line   REL              0000000000000000  00001300
+       0000000000000080  0000000000000010   I      26    22     8
+  [24] .debug_line_str   PROGBITS         0000000000000000  00000d68
+       000000000000006c  0000000000000001  MS       0     0     1
+  [25] .llvm_addrsig     LOOS+0xfff4c03   0000000000000000  00001380
+       0000000000000003  0000000000000000   E      26     0     1
+  [26] .symtab           SYMTAB           0000000000000000  00000dd8
+       0000000000000168  0000000000000018           1    12     8
+```
+
+We can see all the sections we specified in the eBPF program with the `SEC` macros, along with the generated BTF information under the `.BTF` section. But as you can see, there is also other debug information generated by clang that we do not need, so we can simply get rid of it by using `llvm-strip -g hello-world.bpf.o`.
+
+```bash
+readelf -S hello-world.bpf.o 
+There are 13 section headers, starting at offset 0x8b0:
+
+Section Headers:
+  [Nr] Name              Type             Address           Offset
+       Size              EntSize          Flags  Link  Info  Align
+  [ 0]                   NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [ 1] .strtab           STRTAB           0000000000000000  00000823
+       0000000000000088  0000000000000000           0     0     1
+  [ 2] .text             PROGBITS         0000000000000000  00000040
+       0000000000000000  0000000000000000  AX       0     0     4
+  [ 3] tracepoint/s[...] PROGBITS         0000000000000000  00000040
+       00000000000000a8  0000000000000000  AX       0     0     8
+  [ 4] .reltracepoi[...] REL              0000000000000000  00000740
+       0000000000000010  0000000000000010   I      12     3     8
+  [ 5] license           PROGBITS         0000000000000000  000000e8
+       0000000000000004  0000000000000000  WA       0     0     1
+  [ 6] .maps             PROGBITS         0000000000000000  000000f0
+       0000000000000010  0000000000000000  WA       0     0     8
+  [ 7] .BTF              PROGBITS         0000000000000000  00000100
+       00000000000004c2  0000000000000000           0     0     4
+  [ 8] .rel.BTF          REL              0000000000000000  00000750
+       0000000000000020  0000000000000010   I      12     7     8
+  [ 9] .BTF.ext          PROGBITS         0000000000000000  000005c4
+       00000000000000ec  0000000000000000           0     0     4
+  [10] .rel.BTF.ext      REL              0000000000000000  00000770
+       00000000000000b0  0000000000000010   I      12     9     8
+  [11] .llvm_addrsig     LOOS+0xfff4c03   0000000000000000  00000820
+       0000000000000003  0000000000000000   E       0     0     1
+  [12] .symtab           SYMTAB           0000000000000000  000006b0
+       0000000000000090  0000000000000018           1     3     8
+```
+
+Now we only have the necessary sections present for the eBPF program to be loaded into kernel, we can write the user-space part of the program. Working with eBPF programs from the user-space is sometimes repetetive and alot of boilerplate code needs to be written. Luckily, bpftool provides us with a lot of usefull commands to work with eBPF programs, one of which is to dump a C header file which we then can import in out user-space program that takes care of alot of the boilerplate. To achieve this we execute the command
+
+```bash
+sudo bpftool gen skeleton hello-world.bpf.o > hello-world.skel.h
+```
+
+Now we have everything ready and can start writing the user-space program.
+
+```c
+#include "hello-world.skel.h"
+#include "events.h"
+#include <stdio.h>
+
+// print function to be registered with the libbpf library, which will print out information when the eBPF
+// binary `hello-world.bpf.o` is loaded into the kernel.
+int debug_print(enum libbpf_print_level level, const char *format, va_list args) { return vfprintf(stdout, format, args); }
+
+// callback function used with the created ring buffer to consume messages send from the kernel-space
+// and print them out to stdout in the user-space.
+int handle_event(void *ctx, void *data, size_t size) {
+    struct event *event = data;
+    fprintf(stdout, "%s openat: %s\n", event->parent_comm, event->requested_comm);
+    return 0;
+}
+
+int main(int argc, char **arv) {
+    int err = 0;
+    struct ring_buffer *buffer = NULL;
+
+    // Defined in the generated boilerplate `hello-world.skel.h`.
+    // This generate skeleton boilerplate will contain all the necessary references and
+    // file descriptors to all bpf objects defined in the compiled eBPF binary, along
+    // with utility functions to will ease the process.
+    struct hello_world_bpf *skeleton = NULL; 
+
+    // register print function.
+    libbpf_set_print(debug_print); 
+
+    // open the binary and immediately load it into the kernel.
+    skeleton = hello_world_bpf__open_and_load(); 
+    if (!skeleton) {
+        goto done;
+    }
+
+    // at this point the eBPF program was successfully verified and is loaded in the kernel
+    // however we still need to attach is to the requested tracepoint event.
+    err = hello_world_bpf__attach(skeleton);
+    if (err) {
+        goto done;
+    }
+
+    // we create a reference to the ring buffer map created by the eBPF program and use
+    // the file descriptor that can be retrieved with the `bpf_map__fd()` function from
+    // the libbpf library, and attach a function to be triggered when the kernel-space
+    // programs submits new data to be consumed.
+    buffer = ring_buffer__new(bpf_map__fd(skeleton->maps.buffer), handle_event, 0, 0);
+    if (!buffer) {
+        goto done;
+    }
+
+    for (;;) {
+        // check for new data in the ring buffer every 10ms.
+        err = ring_buffer__poll(buffer, 10);
+        if (err < 0) {
+            break;
+        }
+    }
+
+done:
+    if (skeleton) hello_world_bpf__destroy(skeleton);
+    if (buffer) ring_buffer__free(buffer);
+    return -err;
+}
+```
+
+Since the generated template file is quite large, I have decided not to show the contents of this file, but it is possible to view it at <TODO: link to skeleton file.>.
+
+Now we have all the files present and your directory should look like this
+
+```bash
+.
+|---- events.h
+|---- hello-world.bpf.c
+|---- hello-world.bpf.o
+|---- hello-world.skel.h
+|---- hello-world.user.c
+|---- vmlinux.h
+```
+
+Finally, to compile the user-space program and run it
+
+```bash
+# on my machine the libbpf is under /usr/lib64/ this may difer for you.
+$ clang hello-world.user.c -L/usr/lib64/ -lbpf -lelf -Wl, -rpath /usr/lib64/
+$ sudo ./a.out 
+libbpf: loading object 'hello_world_bpf' from buffer
+libbpf: elf: section(3) tracepoint/syscalls/sys_enter_openat, size 168, link 0, flags 6, type=1
+libbpf: sec 'tracepoint/syscalls/sys_enter_openat': found program 'openat' at insn offset 0 (0 bytes), code size 21 insns (168 bytes)
+libbpf: elf: section(4) .reltracepoint/syscalls/sys_enter_openat, size 16, link 12, flags 40, type=9
+libbpf: elf: section(5) license, size 4, link 0, flags 3, type=1
+libbpf: license of hello_world_bpf is GPL
+libbpf: elf: section(6) .maps, size 16, link 0, flags 3, type=1
+libbpf: elf: section(7) .BTF, size 1218, link 0, flags 0, type=1
+libbpf: elf: section(9) .BTF.ext, size 236, link 0, flags 0, type=1
+libbpf: elf: section(12) .symtab, size 144, link 1, flags 0, type=2
+libbpf: looking for externs among 6 symbols...
+libbpf: collected 0 externs total
+libbpf: map 'buffer': at sec_idx 6, offset 0.
+libbpf: map 'buffer': found type = 27.
+libbpf: map 'buffer': found max_entries = 1024.
+libbpf: sec '.reltracepoint/syscalls/sys_enter_openat': collecting relocation for section(3) 'tracepoint/syscalls/sys_enter_openat'
+libbpf: sec '.reltracepoint/syscalls/sys_enter_openat': relo #0: insn #1 against 'buffer'
+libbpf: prog 'openat': found map 0 (buffer, sec 6, off 0) for insn #1
+libbpf: object 'hello_world_bpf': failed (-22) to create BPF token from '/sys/fs/bpf', skipping optional step...
+libbpf: loaded kernel BTF from '/sys/kernel/btf/vmlinux'
+libbpf: sec 'tracepoint/syscalls/sys_enter_openat': found 1 CO-RE relocations
+libbpf: CO-RE relocating [10] struct trace_event_raw_sys_enter: found target candidate [2380] struct trace_event_raw_sys_enter in [vmlinux]
+libbpf: prog 'openat': relo #0: <byte_off> [10] struct trace_event_raw_sys_enter.args[1] (0:2:1 @ offset 24)
+libbpf: prog 'openat': relo #0: matching candidate #0 <byte_off> [2380] struct trace_event_raw_sys_enter.args[1] (0:2:1 @ offset 24)
+libbpf: prog 'openat': relo #0: patched insn #11 (LDX/ST/STX) off 24 -> 24
+libbpf: map 'buffer': created successfully, fd=3
+systemd-oomd openat: /proc/meminfo
+systemd-oomd openat: /proc/meminfo
+systemd-oomd openat: /proc/meminfo
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /proc/meminfo
+systemd-oomd openat: /proc/meminfo
+systemd-oomd openat: /proc/meminfo
+systemd-oomd openat: /proc/meminfo
+systemd-oomd openat: /proc/meminfo
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /sys/fs/cgroup/user.slice/user-
+systemd-oomd openat: /proc/meminfo
+```
+
+**NOTE** You can also see the relocation happening as the eBPF binary is loaded with the CO-RE.
+
+The reference for the code is available at: <TODO: add link>
+
 # XDP - Hello World
 explain what xdp is.
 
 lifecycle of xpd programes attached to an interface will depend on the life of that interface.
 TODO: add reference to xdp loadbalancer and include simple hello world example
+
+# Uprobes, Kprobes, Tracepoints etc...
+TODO: mention all the above
 
 # Future
 TODO: Mentiond GPUs and windows.
