@@ -7,7 +7,7 @@ categories: [Tech]
 
 Re-creating polyglot files that work on modern operating systems and devices. [Read the paper](/assets/pdf/creating-polyglot-files.pdf)
 
-Follow this [link](https://github.com/Despire/playground/ff-tools) for the implementation used in the paper.
+Follow this [link](https://github.com/Despire/playground/tree/main/ff-tools) for the implementation used in the paper.
 
 For demonstation (with bad sound unfortunutely) you can follow these two links:
 
