@@ -42,7 +42,7 @@ If $$y^{'}_{15}$$ equal to $$y_{15}$$ then the verifier can accept that $$x_6$$ 
 
 # A Simple Implementation In Go
 
-The full implementation can be accessed on [this github repository](https://github.com/Despire/merkle-tree/blob/main/merkle/tree.go)
+The full implementation can be accessed on [this github repository](https://github.com/Despire/playground/blob/00642fd59dc4f699b0c893e4c45d883cb222bd19/merkle-tree/merkle/tree.go)
 
 Let us start by first constructing the tree structure from a set of values.
 
@@ -147,7 +147,6 @@ func (tree *Tree) Proof(h []byte) ([]PathPoint, error) {
     }
 
     return path, nil
-}
 }
 ```
 
