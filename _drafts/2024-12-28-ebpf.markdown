@@ -1,0 +1,60 @@
+---
+layout: post
+title: "eBPF"
+date: 2024-12-28
+categories: [Tech]
+---
+
+# BPF
+
+Originally BPF was the abbreviation of Berkley Packet Processing, a small virtual machine running within the unix kernel designed to filter network packets on incoming interfaces. BPF allowed dynamic modifications of the filtering rules applied on the incoming packets giving power to the users for custom filtering criteria.
+
+As technology progressed, particularly in the early 2010s, the Linux kernel became a dominant operating system for server-side computing. This stability led to challenges in innovating within the kernel without facing significant resistance. Key developers recognized limitations in the existing capabilities of the Linux kernel, regarding networking and observability, prompting them to extend BPF into what is now known as extended Berkley Packet Processing or eBPF today. The term eBPF should not be treated as an abbreviation but rather as the name of the technology itself, as having the name extended Berkley Packet Processing does not name much sense anymore.
+
+They did not need to start from scratch as Linux kernels already had orignal BPF support, so what was done is to just extend the virtual machine to support a wider instruction set with more general operations and turning it into a more generelized virtual machine running inside the kernel that could be used not only for packet filtering but for far more, especially observability, security and more custom packet processing.
+
+# eBPF
+
+As mentioned eBPF is a virtual machine running inside the linux kernel. It has its own instruction set and registers. At the time of writing this article the eBPF VM has a total of 11 64bit general purpose registers named R0 up to R10, where different registers are used for different purposes following some specific conventions. The instruction set along with the meaning of each register can be looked up on [kernel.org](https://www.kernel.org/doc/html/v5.17/bpf/instruction-set.html)[^1] or simply by searching on the internet for eBPF instruction set.
+
+The whole pipeline of executing eBPF programs is as follows, the eBPF program is written in the supported instruction set to achieve the desired behaviour, the program is then loaded into the kernel where it is verified before actually being executed. This step is important because running arbitrary programs inside the kernel is dangerous. Verification of the program is done by the verifier, which checks for every pointer access, infinite loops and generally prevents undefined behaviour that would crash the kernel. When loading arbitrary eBPF programs, the last thing we want is for the kernel to crash. Once the loading of the program passes the verification step, we have a guarantee that our program will not crash the kernel.
+
+![alt text](/assets/img/ebpf/ebpf.png)
+
+As you can see from the figure above, there are various events, namely kprobes, uprobes, tracepoints and perf events, to which the eBPF program can attach itself. Once the program is loaded into the kernel, it is not executed immediately, but on each occurrence of the given event.
+
+In practice, eBPF programs are not written by hand with the instruction set (which is very similar to assembly), but there are already tools that we can use to speed up the development process. Clang is a C compiler based on LLVM that implements the BPF backend, meaning that we can write C code that we can then compile down to the instruction set of the eBPF virtual machine to run our programs. In addition, the eBPF ecosystem around the C language has a number of utilities that make working with eBPF much more pleasant, such as [libbpf](https://github.com/libbpf/libbpf)[^2].
+
+Generally speaking, an eBPF binary, i.e. when the written program is compiled down to the VM executable, consists of more than just eBPF programs, there are also maps and also BTF (but more on that later). Maps are a way for eBPF programs to store state that can be carried over across multiple runs of the same program, or even to share data between different eBPF programs or even user space programs. As with the verifier, which would not allow arbitrary instructions to be executed within the kernel, maps also have a limitation in that they cannot hold infinite amounts of data, as we are used to when programming in userspace. Specific limits on the number of elements must be specified at compile time, and working with these limits will be one of the more difficult parts of writing eBPF programs, along with satisfying the verifier.
+
+The main selling point of eBPF programs is that instead of writing kernel extensions, i.e. kernel modules, or recompiling the kernel with your own modifications, which could end up crashing the kernel if you are not very careful, you have this "safe" interface which can be used to deploy your modification much faster and safer.
+
+Software development is an ongoing process that rarely, if ever, ends. As with previous options, such as the kernel module, the Linux kernel is constantly evolving, and type definitions within the kernel are subject to change in the future, directly affecting any custom extension we have provided for the current version. BPF programs are no exception.
+
+When writing eBPF programs, you have access to the type definitions within the Linux kernel, which makes the development process much easier. When you develop the program, you compile it with respect to the current Linux version you are running, and thus with the kernel type definitions within that version, making it incompatible with newer or older kernel versions if the type definitions have changed. This is where Compile-Once Run-Everywhere (CO-RE) comes in.
+
+# CO-RE
+
+If you wanted to deploy your program on multiple machines, you would most likely have compatibility problems unless each machine was running the exact same version of the Linux kernel. So, to solve this problem, you would have to download dependency and compilation tools on each machine, and then compile and deploy the eBPF program on each of them individually, ugh!
+
+Not only is this cumbersome, it is also error-prone and wastes a lot of computing resources. Compile-Once Run-Everywhere addresses these compatibility issues between different Linux kernel versions for a compiled eBPF program by using BTF.
+
+BTF is a mechanism that carries the type definitions, field offsets within types, function signatures, etc. for a specific Linux kernel version. This type information is then included in the compiled eBPF binary itself and when deployed, the inconsistencies are dynamically resolved at run time by the eBPF virtual machine without requiring any changes to the program, allowing you to compile your eBPF program once locally on your machine and deploy it to different machines. You will see an example of that in the Hello-World section.
+
+# Lifetime
+
+# Hello World
+TODO: write hello world with ringbuf maps and execve kprobe.
+
+# XDP Load-Balancer
+TODO: write xdp loadbalancer
+
+# Future
+TODO: Mentiond GPUs and windows.
+
+# Conclusion
+
+**Footnotes**
+
+[^1]: [BPF - Instruction set, Accessed 28. Dec. 2024](https://www.kernel.org/doc/html/v5.17/bpf/instruction-set.html)
+[^2]: [libbpf - Instruction set, Accessed 28. Dec. 2024](https://github.com/libbpf/libbpf)
