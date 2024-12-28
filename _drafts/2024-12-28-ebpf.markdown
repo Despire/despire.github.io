@@ -43,11 +43,125 @@ BTF is a mechanism that carries the type definitions, field offsets within types
 
 # Lifetime
 
-# Hello World
-TODO: write hello world with ringbuf maps and execve kprobe.
+BPF objects, maps, programs, etc. are managed by reference counting. Each time a map is created, its reference count is set to 1 and a file descriptor is returned to the calling user-space process. The returned file descriptor can then be used to interact with the map within the user-space process.
 
-# XDP Load-Balancer
-TODO: write xdp loadbalancer
+Similarly, when a bpf program is loaded, its reference count is set to 1 and a file descriptor is returned. Furthermore, when the bpf program uses a bpf map, the map is first created with a reference count of 1, and then increased again as the program itself references the map, resulting in the map remaining alive as long as the program is alive.
+
+When the reference count for any bpf object reaches 0, it is aborted by the kernel and will not be executed again until it is loaded again.
+
+In general, there are two ways to manage the lifecycle of an eBPF program. Run a user space process as long as the eBPF program needs to run, i.e. keep the file descriptor and thus the reference to the program/maps alive, or use pinning.
+
+Pinning refers to a concept where we essentially "pin" the map or program to the file system and thus keep the reference to the bpf objects alive as long as the computer is running, and avoid problems with unwanted process terminations/restarts.
+
+# Hello World
+Lets build an hello world eBPF program that prints every usage of the openat syscall.
+
+Setting up the development environment. To work with the kernel data structure without running into different kinds of collisions when importing header files, btftool[^3] provides useful utilities when working with eBPF programs including generating all the data structures used within the kernel that we can then import in our eBPF program.
+
+```bash
+$ sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+```
+
+Next we find the trace hook point for the openat syscall
+
+```bash
+$ sudo ls /sys/kernel/debug/tracing/events/syscalls/ | grep openat
+
+>
+sys_enter_openat
+...
+```
+
+further we also can figure out the arguments with
+
+```bash
+sudo cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_openat/format
+name: sys_enter_openat
+ID: 628
+format:
+	field:unsigned short common_type;	offset:0;	size:2;	signed:0;
+	field:unsigned char common_flags;	offset:2;	size:1;	signed:0;
+	field:unsigned char common_preempt_count;	offset:3;	size:1;	signed:0;
+	field:int common_pid;	offset:4;	size:4;	signed:1;
+
+	field:int __syscall_nr;	offset:8;	size:4;	signed:1;
+	field:int dfd;	offset:16;	size:8;	signed:0;
+	field:const char * filename;	offset:24;	size:8;	signed:0;
+	field:int flags;	offset:32;	size:8;	signed:0;
+	field:umode_t mode;	offset:40;	size:8;	signed:0;
+
+print fmt: "dfd: 0x%08lx, filename: 0x%08lx, flags: 0x%08lx, mode: 0x%08lx", ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned long)(REC->mode))
+```
+
+The program will have two parts, the kernel-space and the user-space part. In order to exchange information between these two parts, a channel must be established with a common data structure that is known at compile time. We will create a file called `events.h` that will have the necessarity struct definitions.
+
+```c
+#ifndef EVENTS_H
+#define EVENTS_H
+
+#define MAX_COMM_LENGTH 32
+
+struct event {
+	char parent_comm[MAX_COMM_LENGTH];
+	char requested_comm[MAX_COMM_LENGTH];
+};
+
+#endif
+```
+
+The next step is to write the kernel part of the eBPF program. The kernel contains much more code that we will look at in more detail. The kernel part file
+will be named `hello-world.bpf.c`, note the `.bpf` to indicate that it is an bpf program written in C, not a regular user space program.
+
+```c
+#include "vmlinux.h"
+#include "events.h"
+
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
+
+struct {
+	__uint(type, BPF_MAP_TYPE_RINGBUF);
+	__uint(max_entries, 1024);
+} buffer SEC(".maps");
+
+char LICENSE[] SEC("license") = "GPL";
+
+SEC("tracepoint/syscalls/sys_enter_openat")
+int openat(struct trace_event_raw_sys_enter *ctx) {
+	struct event *event = bpf_ringbuf_reserve(&buffer, sizeof(struct event), 0);
+	if (!event) {
+		// failed to allocate memory for next event.
+		return 0;
+	}
+	bpf_get_current_comm(&event->parent_comm, sizeof(event->parent_comm));
+	bpf_probe_read_str(&event->requested_comm, sizeof(event->requested_comm), (void*)ctx->args[1]);
+	bpf_ringbuf_submit(event, 0);
+	return 0;
+}
+```
+
+**NOTE:** the `SEC` macros you see in the kernel part of the eBPF program are sections that will be present within the compiled binary itself (we will come back to this later), we can use these section to identify which bpf objects are present in the binary.
+
+1. The program starts by including the generated "vmlinux.h" will all necessary kernel data structures which we then reference in the eBPF program.
+2. We define a map called `buffer` and give it a maximum of 1024 elements. Its type is `BPF_MAP_TYPE_RINGBUF`, which is a common mechanism to exchange
+   data between the kernel and user-space part of the eBPF program. A ring buffer is a circular buffer where data is pushed and consumed from.
+
+    ![alt text](/assets/img/ebpf/ringbuf.png)
+
+   In this case the kernel part would be the producer and the user-space part the consumer of the ring buffer.
+
+3. The license. Your eBPF program must specify a license. This depends on what your program needs to achieve and whether it needs the helper functions defined in the bpf library itself or not. If you use a GPL-licensed helper function, then your eBPF program itself must use the GPL license.
+
+4. Finally, the eBPF program itself, which is attached to the `sys_enter_openat` syscall. The program itself is quite simple, we reserve memory in the ring buffer and then read the process name that is executing the `sys_enter_openat` syscall with `bpf_get_current_comm(&event->parent_comm, sizeof(event->parent_comm))` and the filename that is passed to the syscall as an argument with `bpf_probe_read_str(&event->requested_comm, sizeof(event->requested_comm), (void*)ctx->args[1])`. We then pass this data to the ring buffer to be processed in the user-space part of the eBPF program.
+
+    **NOTE** that the filename is the second argument passed to the syscall, which we can also identify from the above information about the syscall dumped via `sudo cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_openat/format`, thus `ctx->args[1]` is used within the eBPF program.
+
+To wrap this up, we finish we the user-space part of the eBPF program.
+# XDP - Hello World
+explain what xdp is.
+
+lifecycle of xpd programes attached to an interface will depend on the life of that interface.
+TODO: add reference to xdp loadbalancer and include simple hello world example
 
 # Future
 TODO: Mentiond GPUs and windows.
@@ -58,3 +172,4 @@ TODO: Mentiond GPUs and windows.
 
 [^1]: [BPF - Instruction set, Accessed 28. Dec. 2024](https://www.kernel.org/doc/html/v5.17/bpf/instruction-set.html)
 [^2]: [libbpf - Instruction set, Accessed 28. Dec. 2024](https://github.com/libbpf/libbpf)
+[^3]: [bpftool, Accessed 28. Dec. 2024](https://github.com/libbpf/bpftool)
