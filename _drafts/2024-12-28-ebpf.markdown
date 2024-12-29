@@ -431,10 +431,134 @@ systemd-oomd openat: /proc/meminfo
 The reference for the code is available on [github](https://github.com/Despire/playground/tree/d552d8ebf58ede5e2fd1901ece290b0aa4710668/ebpf/openatsnoop)
 
 # XDP - Hello World
-explain what xdp is.
 
-lifecycle of xpd programes attached to an interface will depend on the life of that interface.
-TODO: add reference to xdp loadbalancer and include simple hello world example
+One of the most important features of eBPF is the introduction of the eXpress Data Path hook, or XDP for short. To give a brief history of why this was implemented, let us look at the state of packet processing in the Linux kernel.
+
+When a packet arrives on the network interface card hardware, it is processed by the software device drivers. This processing involves the creation of a structure called `sk_buff`, which is the in kernel representation of the packet, which is then processed by the networking stack in the kernel. Creating the `sk_buff` structure involves copying data and can introduce performance bottlenecks.
+
+![alt text](/assets/img/ebpf/network1.png)
+
+There are already solutions for bypassing the Linux networking stack by working directly with network interfaces, such as a DPDK[^5] that allows you to bypass the kernel altogether and pass control of packet handling to the networking application itself. The downside of such solutions is that they lose access to the existing networking features of the Linux kernel, such as routing tables or the tcp stack, and may need to implement their own solution.
+
+Now, what XDP allows us to do is, to hook our eBPF programs directly to the network interface card drivers, if the drivers support it, and process the packets immediately as they arrive at the interface, before the `sk_buff` structure is created. XDP allows us to perform inspections or modifications on the packet itself, including deciding to drop or redirect the packet. XDP programs are triggered on every single incoming packet on the interface on which the program is attached to.
+
+![alt text](/assets/img/ebpf/network2.png)
+
+To also demonstrate a hello-world program similar to the above one lets write a XDP program that attaches to the main `eth` interface and on every incoming packets prints the source address, either ipv4 or ipv6.
+
+We will use just a single file called `sourceip.bpf.c` and will utilize the iproute2 command line tools to attach the eBPF program to an existing interface.
+
+**NOTE**: that when we attach an XDP program to an interface the program will live as long as that interface exists or until the program is dettached again, as the reference count will be above 0.
+
+```c
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+#include <bpf/bpf_endian.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
+
+char LICENSE[] SEC("license") = "GPL";
+
+SEC("xdp")
+int sourceip(struct xdp_md *ctx) {
+	void* start = (void*)(long)ctx->data;
+	void* end = (void*)(long)ctx->data_end;
+
+	// first convert to ethernet header.
+	struct ethhdr *eth = start;
+	int ethsize = sizeof(struct ethhdr);
+	if (start + ethsize > end) {
+		return 0;
+	}
+
+	if (eth->h_proto == bpf_htons(ETH_P_IP)) {
+		struct iphdr *ip = (start + ethsize);
+		int ipsize = sizeof(struct iphdr);
+		if (start + ethsize + ipsize > end) {
+			return 0;
+		}
+		bpf_printk("Received Source IP: %d.%d.%d.%d\n",
+		       (ip->saddr & 0xFF),
+		       (ip->saddr >> 8) & 0xFF,
+		       (ip->saddr >> 16) & 0xFF,
+		       (ip->saddr >> 24) & 0xFF
+	        );
+	} else {
+		struct ipv6hdr *ipv6 = (start + ethsize);
+		int ipsize = sizeof(struct ipv6hdr);
+		if (start + ethsize + ipsize > end) {
+			return 0;
+		}
+		bpf_printk("Recieved Source IPv6: %04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x",
+				(ipv6->saddr.in6_u.u6_addr16[0]),
+				(ipv6->saddr.in6_u.u6_addr16[1]),
+				(ipv6->saddr.in6_u.u6_addr16[2]),
+				(ipv6->saddr.in6_u.u6_addr16[3]),
+				(ipv6->saddr.in6_u.u6_addr16[4]),
+				(ipv6->saddr.in6_u.u6_addr16[5]),
+				(ipv6->saddr.in6_u.u6_addr16[6]),
+				(ipv6->saddr.in6_u.u6_addr16[7])
+		);
+	}
+	// continue with the linux network stack.
+	// other options are:
+	//
+	//	XDP_ABORTED,
+	//	XDP_DROP,
+	//	XDP_PASS,
+	//	XDP_TX,
+	//	XDP_REDIRECT,
+	return XDP_PASS; 
+}
+```
+
+Next we compile it down to the eBPF binary
+
+```bash
+A = $(shell uname -m)
+ARCH = $(shell uname -m | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/')
+
+clang -target bpf -c sourceip.bpf.c -g -O2 -Wall -D __TARGET_ARCH_$(ARCH) -I/usr/include/$(A)-linux-gnu
+llvm-strip -g sourceip.bpf.o
+```
+
+**NOTE**: you may run into issues with `/usr/include/linux/if_packet.h:5:10: fatal error: 'asm/byteorder.h' file not found`, thats why the extra compiler flags.
+
+We list the interfaces present on this machine and attach the eBPF program to the `enp0s1` interface.
+
+```bash
+ip link show
+
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+2: enp0s1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 1000
+    link/ether 6a:eb:5b:1c:62:51 brd ff:ff:ff:ff:ff:ff
+
+sudo ip link set dev enp0s1 xdp obj sourceip.bpf.o sec xdp
+#to turn it off -> sudo ip link set dev enp0s1 xdp off
+```
+
+Since we did not explicitly use a userspace part for the eBPF program to collect the source IPs of incoming packets, and decided to use the built-in `bpf_printk` function, to view the output we need to run the following command to view the logs
+
+```bash
+sudo cat /sys/kernel/debug/tracing/trace_pipe
+```
+
+If you now ping the interface on which the XDP program is attached, e.g on my machine `ping 192.168.72.1` you should see the source address being printed.
+
+```
+<idle>-0       [000] ..s2. 49853.931760: bpf_trace_printk: Received Source IP: 192.168.72.1
+<idle>-0       [000] ..s2. 49854.984813: bpf_trace_printk: Received Source IP: 192.168.72.1
+<idle>-0       [000] ..s2. 49856.010607: bpf_trace_printk: Received Source IP: 192.168.72.1
+<idle>-0       [000] ..s2. 49857.012974: bpf_trace_printk: Received Source IP: 192.168.72.1
+<idle>-0       [000] ..s2. 49858.013830: bpf_trace_printk: Received Source IP: 192.168.72.1
+```
+
+**NOTE**: the `/sys/kernel/debug/tracing/trace_pipe` is a common pipe for all eBPF programs and should not be used in any production software.
+
+The code for this example is published on [github](https://github.com/Despire/playground/tree/366e2d6ba5a81c778507887e8c96c869f33c5b5e/ebpf/sourceprinter). A good tutorial on XDP, from basics to advanced, can be found at [xdp-project](https://github.com/xdp-project/xdp-tutorial)
 
 # Future
 
@@ -450,3 +574,4 @@ Bpf has proven to be a game-changing technology by companies like Isovalent, dra
 [^2]: [libbpf - Instruction set, Accessed 28. Dec. 2024](https://github.com/libbpf/libbpf)
 [^3]: [bpftool, Accessed 28. Dec. 2024](https://github.com/libbpf/bpftool)
 [^4]: [eBPF - Windows, Accessed 29. Dec 2024](https://github.com/microsoft/ebpf-for-windows)
+[^5]: [DPDK, Accessed 29. Dec 2024](https://www.dpdk.org/)
