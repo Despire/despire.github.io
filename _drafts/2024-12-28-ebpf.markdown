@@ -9,7 +9,7 @@ categories: [Tech]
 
 Originally BPF was the abbreviation of Berkley Packet Processing, a small virtual machine running within the unix kernel designed to filter network packets on incoming interfaces. BPF allowed dynamic modifications of the filtering rules applied on the incoming packets giving power to the users for custom filtering criteria.
 
-As technology progressed, particularly in the early 2010s, the Linux kernel became a dominant operating system for server-side computing. This stability led to challenges in innovating within the kernel without facing significant resistance. Key developers recognized limitations in the existing capabilities of the Linux kernel, regarding networking and observability, prompting them to extend BPF into what is now known as extended Berkley Packet Processing or eBPF today. The term eBPF should not be treated as an abbreviation but rather as the name of the technology itself, as having the name extended Berkley Packet Processing does not name much sense anymore.
+As technology progressed, particularly in the early 2010s, the Linux kernel became a dominant operating system for server-side computing. This stability led to challenges in innovating within the kernel without facing significant resistance. Key developers recognized limitations in the existing capabilities of the Linux kernel, regarding networking and observability, prompting them to extend BPF into what is now known as extended Berkley Packet Processing or eBPF. The term eBPF should not be treated as an abbreviation but rather as the name of the technology itself, as having the name extended Berkley Packet Processing does not name much sense anymore.
 
 They did not need to start from scratch as Linux kernels already had orignal BPF support, so what was done is to just extend the virtual machine to support a wider instruction set with more general operations and turning it into a more generelized virtual machine running inside the kernel that could be used not only for packet filtering but for far more, especially observability, security and more custom packet processing.
 
@@ -107,7 +107,7 @@ format:
 print fmt: "dfd: 0x%08lx, filename: 0x%08lx, flags: 0x%08lx, mode: 0x%08lx", ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), ((unsigned long)(REC->flags)), ((unsigned long)(REC->mode))
 ```
 
-The program will have two parts, the kernel-space part and the user-space part. In order to exchange information between these two parts, a channel must be established with a common data structure that is known at compile time. We will create a file called `events.h' which will contain the necessary struct definitions, used by both parts of the program.
+The program will have two parts, the kernel-space part and the user-space part. In order to exchange information between these two parts, a channel must be established with a common data structure that is known at compile time. We will create a file called `events.h` which will contain the necessary struct definitions, used by both parts of the program.
 
 ```c
 #ifndef EVENTS_H
@@ -123,7 +123,7 @@ struct event {
 #endif
 ```
 
-The next step is to write the kernel-space part of the eBPF program, the file will be named `hello-world.bpf.c`, note the `.bpf` to indicate that it is a bpf program written in C, not a regular user space program.
+The next step is to write the kernel-space part of the eBPF program, the file will be named `openatsnoop.bpf.c`, note the `.bpf` to indicate that it is a bpf program written in C, not a regular user space program.
 
 ```c
 #include "vmlinux.h"
@@ -172,7 +172,7 @@ int openat(struct trace_event_raw_sys_enter *ctx) {
 Before we get to the user-space part of the program, a few more steps will be discussed. Now that we have completed the kernel-space part, we can compile it down to the eBPF binary that can be run on the virtual machine. To do this, as mentioned before, we use clang.
 
 ```bash
-clang -target bpf -c hello-world.bpf.c -O2 -g
+clang -target bpf -c openatsnoop.bpf.c -O2 -g
 ```
 
 - `-target bpf` specifies the target architecture to which the program will compile to.
@@ -180,10 +180,10 @@ clang -target bpf -c hello-world.bpf.c -O2 -g
 - `-O2` is the optimization level.
 - `-g` tells clang to compile with debug information. This include the BTF information in the binary to be used with CO-RE.
 
-If we now inspect the generated binary, named `hello-world.bpf.o`
+If we now inspect the generated binary, named `openatsnoop.bpf.o`
 
 ```bash
-readelf -S hello-world.bpf.o 
+readelf -S openatsnoop.bpf.o 
 There are 27 section headers, starting at offset 0x14b0:
 
 Section Headers:
@@ -245,10 +245,10 @@ Section Headers:
        0000000000000168  0000000000000018           1    12     8
 ```
 
-We can see all the sections we specified in the eBPF program with the `SEC` macros, along with the generated BTF information under the `.BTF` section. But as you can see, there is also other debug information generated by clang that we do not need, so we can simply get rid of it by using `llvm-strip -g hello-world.bpf.o`.
+We can see all the sections we specified in the eBPF program with the `SEC` macros, along with the generated BTF information under the `.BTF` section. But as you can see, there is also other debug information generated by clang that we do not need, so we can simply get rid of it by using `llvm-strip -g openatsnoop.bpf.o`.
 
 ```bash
-readelf -S hello-world.bpf.o 
+readelf -S openatsnoop.bpf.o 
 There are 13 section headers, starting at offset 0x8b0:
 
 Section Headers:
@@ -282,21 +282,21 @@ Section Headers:
        0000000000000090  0000000000000018           1     3     8
 ```
 
-Now we only have the necessary sections present for the eBPF program to be loaded into kernel, we can write the user-space part of the program. Working with eBPF programs from the user-space is sometimes repetetive and alot of boilerplate code needs to be written. Luckily, bpftool provides us with a lot of usefull commands to work with eBPF programs, one of which is to dump a C header file which we then can import in out user-space program that takes care of alot of the boilerplate. To achieve this we execute the command
+Now we only have the necessary sections present for the eBPF program to be loaded into kernel, we can write the user-space part of the program. Working with eBPF programs from the user-space is sometimes repetetive and alot of boilerplate code needs to be written. Luckily, bpftool provides us with a lot of usefull commands to work with eBPF programs, one of which is to dump a C header file which we then can import in our user-space program that takes care of alot of the boilerplate. To achieve this we execute the command
 
 ```bash
-sudo bpftool gen skeleton hello-world.bpf.o > hello-world.skel.h
+sudo bpftool gen skeleton openatsnoop.bpf.o > openatsnoop.skel.h
 ```
 
 Now we have everything ready and can start writing the user-space program.
 
 ```c
-#include "hello-world.skel.h"
+#include "openatsnoop.skel.h"
 #include "events.h"
 #include <stdio.h>
 
 // print function to be registered with the libbpf library, which will print out information when the eBPF
-// binary `hello-world.bpf.o` is loaded into the kernel.
+// binary `openatsnoop.bpf.o` is loaded into the kernel.
 int debug_print(enum libbpf_print_level level, const char *format, va_list args) { return vfprintf(stdout, format, args); }
 
 // callback function used with the created ring buffer to consume messages send from the kernel-space
@@ -311,7 +311,7 @@ int main(int argc, char **arv) {
     int err = 0;
     struct ring_buffer *buffer = NULL;
 
-    // Defined in the generated boilerplate `hello-world.skel.h`.
+    // Defined in the generated boilerplate `openatsnoop.skel.h`.
     // This generate skeleton boilerplate will contain all the necessary references and
     // file descriptors to all bpf objects defined in the compiled eBPF binary, along
     // with utility functions to will ease the process.
@@ -357,17 +357,17 @@ done:
 }
 ```
 
-Since the generated template file is quite large, I have decided not to show the contents of this file, but it is possible to view it at <TODO: link to skeleton file.>.
+Since the generated template file is quite large, I have decided not to show the contents of this file, but it is possible to view it on [github](https://github.com/Despire/playground/blob/d552d8ebf58ede5e2fd1901ece290b0aa4710668/ebpf/openatsnoop/openatsnoop.skel.h)
 
 Now we have all the files present and your directory should look like this
 
 ```bash
 .
 |---- events.h
-|---- hello-world.bpf.c
-|---- hello-world.bpf.o
-|---- hello-world.skel.h
-|---- hello-world.user.c
+|---- openatsnoop.bpf.c
+|---- openatsnoop.bpf.o
+|---- openatsnoop.skel.h
+|---- openatsnoop.c
 |---- vmlinux.h
 ```
 
@@ -375,7 +375,7 @@ Finally, to compile the user-space program and run it
 
 ```bash
 # on my machine the libbpf is under /usr/lib64/ this may difer for you.
-$ clang hello-world.user.c -L/usr/lib64/ -lbpf -lelf -Wl, -rpath /usr/lib64/
+$ clang openatsnoop.c -L/usr/lib64/ -lbpf -lelf -Wl, -rpath /usr/lib64/
 $ sudo ./a.out 
 libbpf: loading object 'hello_world_bpf' from buffer
 libbpf: elf: section(3) tracepoint/syscalls/sys_enter_openat, size 168, link 0, flags 6, type=1
@@ -428,7 +428,7 @@ systemd-oomd openat: /proc/meminfo
 
 **NOTE** You can also see the relocation happening as the eBPF binary is loaded with the CO-RE.
 
-The reference for the code is available at: <TODO: add link>
+The reference for the code is available on [github](https://github.com/Despire/playground/tree/d552d8ebf58ede5e2fd1901ece290b0aa4710668/ebpf/openatsnoop)
 
 # XDP - Hello World
 explain what xdp is.
