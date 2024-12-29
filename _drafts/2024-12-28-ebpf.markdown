@@ -436,16 +436,17 @@ explain what xdp is.
 lifecycle of xpd programes attached to an interface will depend on the life of that interface.
 TODO: add reference to xdp loadbalancer and include simple hello world example
 
-# Uprobes, Kprobes, Tracepoints etc...
-TODO: mention all the above
-
 # Future
-TODO: Mentiond GPUs and windows.
+
+So what does the future hold for eBPF? The technology is still evolving and far from finished. New possibilities are constantly being worked on, such as GPU support, evolving networking in the cloud environment, such as the company Isovalent with their [Cilium](https://cilium.io/) network solution based on eBPF, or even moving to different platforms, recently Microsoft announced that they will adopt eBPF for [windows](https://github.com/microsoft/ebpf-for-windows)[^4].
 
 # Conclusion
+
+Bpf has proven to be a game-changing technology by companies like Isovalent, drastically improving network latency within Kubernetes clusters and becoming the de facto standard goto network plugin used by various [companies](https://github.com/cilium/cilium/blob/18396d92c69071e396f6c00579f9849010b59c5a/USERS.md#L125). It's hard to predict the future, but at the time of writing, it's safe to say that eBPF is here to stay and will only get better from here.
 
 **Footnotes**
 
 [^1]: [BPF - Instruction set, Accessed 28. Dec. 2024](https://www.kernel.org/doc/html/v5.17/bpf/instruction-set.html)
 [^2]: [libbpf - Instruction set, Accessed 28. Dec. 2024](https://github.com/libbpf/libbpf)
 [^3]: [bpftool, Accessed 28. Dec. 2024](https://github.com/libbpf/bpftool)
+[^4]: [eBPF - Windows, Accessed 29. Dec 2024](https://github.com/microsoft/ebpf-for-windows)
