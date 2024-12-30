@@ -470,14 +470,14 @@ int sourceip(struct xdp_md *ctx) {
 	struct ethhdr *eth = start;
 	int ethsize = sizeof(struct ethhdr);
 	if (start + ethsize > end) {
-		return 0;
+		return XDP_PASS;
 	}
 
 	if (eth->h_proto == bpf_htons(ETH_P_IP)) {
 		struct iphdr *ip = (start + ethsize);
 		int ipsize = sizeof(struct iphdr);
 		if (start + ethsize + ipsize > end) {
-			return 0;
+			return XDP_PASS;
 		}
 		bpf_printk("Received Source IP: %d.%d.%d.%d\n",
 		       (ip->saddr & 0xFF),
@@ -489,7 +489,7 @@ int sourceip(struct xdp_md *ctx) {
 		struct ipv6hdr *ipv6 = (start + ethsize);
 		int ipsize = sizeof(struct ipv6hdr);
 		if (start + ethsize + ipsize > end) {
-			return 0;
+			return XDP_PASS;
 		}
 		bpf_printk("Recieved Source IPv6: %04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x",
 				(ipv6->saddr.in6_u.u6_addr16[0]),
@@ -558,7 +558,7 @@ If you now ping the interface on which the XDP program is attached, e.g on my ma
 
 **NOTE**: the `/sys/kernel/debug/tracing/trace_pipe` is a common pipe for all eBPF programs and should not be used in any production software.
 
-The code for this example is published on [github](https://github.com/Despire/playground/tree/586a3e9db94dbd9d0608aee0473f2a6c2d39a1a8/ebpf/sourceprinter). A good tutorial on XDP, from basics to advanced, can be found at [xdp-project](https://github.com/xdp-project/xdp-tutorial)
+The code for this example is published on [github](https://github.com/Despire/playground/tree/685d4b2372249fb778c514fad093d2b402c82243/ebpf/sourceprinter). A good tutorial on XDP, from basics to advanced, can be found at [xdp-project](https://github.com/xdp-project/xdp-tutorial)
 
 # Future
 
