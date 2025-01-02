@@ -27,7 +27,7 @@ We'll be using [Docker](https://www.docker.com/) as the container runtime. I hig
 Lets start by downloading an image with `docker pull` 
 **NOTE**: all of the examples are done on a fresh VM just docker installed.
 
-```
+```bash
 $ docker pull registry.k8s.io/e2e-test-images/agnhost:2.39
 2.39: Pulling from e2e-test-images/agnhost
 0eeab5c20069: Pull complete 
@@ -48,7 +48,7 @@ registry.k8s.io/e2e-test-images/agnhost:2.39
 
 Wait, what is an image anyway? Well lets have a look. Docker stores anything relevant under the `/var/lib/docker`
 
-```
+```bash
 $ cd /var/lib/docker/
 $ ls
 buildkit  containers  engine-id  image  network  overlay2  plugins  runtimes  swarm  tmp  volumes
@@ -57,7 +57,7 @@ buildkit  containers  engine-id  image  network  overlay2  plugins  runtimes  sw
 
 There are a lot of directories, where do we look ? well from the above above it seems that we downloaded a total of 10 "of something". Docker also printed a hash next to the downloaded items so lets search for the last one downloaded inside the `/var/lib/docker` directory.
 
-```
+```bash
 $ grep -r "2e5f0eb2f34c" ./
 
 ./image/overlay2/distribution/v2metadata-by-diffid/sha256/4d698fdb75002056847ee0d1ffcbc8a746d5e5ceebc2b3358235eee0f1348f9a:[{"Digest":"sha256:2e5f0eb2f34cf44850e0c439266ddb5f0240a526d53adb2614985c69679b935b","SourceRepository":"registry.k8s.io/e2e-test-images/agnhost","HMAC":""}]
@@ -72,7 +72,7 @@ We found a JSON file that contains the hash, and whats interesting is the path o
 It seems that the path contains a different hash that references our originally searched for hash.
 So lets look for any files containing this new hash.
 
-```
+```bash
 $ grep -r "4d698fdb75002056847ee0d1ffcbc8a746d5e5ceebc2b3358235eee0f1348f9a" ./
 
 ./image/overlay2/layerdb/sha256/1c7a1bab7d8e974b098055c75576325d0850b1752a390f5ebdfa198902a55a00/diff:sha256:4d698fdb75002056847ee0d1ffcbc8a746d5e5ceebc2b3358235eee0f1348f9a
@@ -210,7 +210,7 @@ We have found 3 references and the last one seems to be a JSON so lets pretty pr
 
 Okay, so the found JSON contains some information about the downloaded docker image, and at the bottom of the file is the hash we were looking for, stored under a type called "layers".
 
-```
+```bash
 $ docker pull registry.k8s.io/e2e-test-images/agnhost:2.39
 2.39: Pulling from e2e-test-images/agnhost
 0eeab5c20069: Pull complete 
@@ -230,13 +230,13 @@ registry.k8s.io/e2e-test-images/agnhost:2.39
 So essentially what this `docker pull` does it seems to download a bunch of layers into the host file system. But what actually are these layers ?
 
 One of the other paths that was found referencing our hash was 
-```
+```bash
 ./image/overlay2/layerdb/sha256/1c7a1bab7d8e974b098055c75576325d0850b1752a390f5ebdfa198902a55a00/diff:sha256:4d698fdb75002056847ee0d1ffcbc8a746d5e5ceebc2b3358235eee0f1348f9a
 ```
 
 So lets list whats inside that directory
 
-```
+```bash
 $ ls ./image/overlay2/layerdb/sha256/1c7a1bab7d8e974b098055c75576325d0850b1752a390f5ebdfa198902a55a00/
 
 cache-id  diff  parent  size  tar-split.json.gz
@@ -246,7 +246,7 @@ There are a bunch of hashes inside each of these files if you would dump them vi
 
 
 which in my case is
-```
+```bash
 $ cat ./image/overlay2/layerdb/sha256/1c7a1bab7d8e974b098055c75576325d0850b1752a390f5ebdfa198902a55a00/cache-id 
 
 5bf06ed7a43fa779b3c6d6162fc22c8a88540d210cf24106ee1e7f4125cdf035
@@ -254,7 +254,7 @@ $ cat ./image/overlay2/layerdb/sha256/1c7a1bab7d8e974b098055c75576325d0850b1752a
 
 As I was looking around for the references for this hash I found that there is a directory inside `/var/lib/docker/overlay2` with exactly this hash
 
-```
+```bash
 $ ls overlay2/5bf06ed7a43fa779b3c6d6162fc22c8a88540d210cf24106ee1e7f4125cdf035/
 
 committed  diff  link  lower  work
@@ -272,7 +272,7 @@ Overlay filesystem is a union filesystem implementation in the Linux kernel that
 
 So what happens when we run these downloaded Docker images?
 
-```
+```bash
 $ docker run registry.k8s.io/e2e-test-images/agnhost:2.39
 Paused
 
@@ -280,7 +280,7 @@ Paused
 
 In another terminal we can list the mounts and check for an overlay filesystem
 
-```
+```bash
 $ mount 
 
 overlay on /var/lib/docker/overlay2/0dc9e11caffe1f941a358b7ab0aade2cd7f1c532ca49dc65f9c3be729e42a43c/merged type overlay (rw,relatime,lowerdir=/var/lib/docker/overlay2/l/VAJBN2IW7SZ7TRTPGXPNCOGMTG:/var/lib/docker/overlay2/l/6DTDIDT4PHBY7JAC23ZFCNKLWN:/var/lib/docker/overlay2/l/2RCNRU2ZJ5IEMC4M62HM5PLNEI:/var/lib/docker/overlay2/l/Y75UYVFC7V3E7Y4PHRQYSNBRY4:/var/lib/docker/overlay2/l/JM24ZBE7HGIJWI3FKXEUSU5NVO:/var/lib/docker/overlay2/l/GA52BDTG6YTDJNY7KEFDYXXSUZ:/var/lib/docker/overlay2/l/VEQI25EFL2WC2L7QZURGQMQP76:/var/lib/docker/overlay2/l/BD36D7YSKP5BO7KPPEQYXZX7TN:/var/lib/docker/overlay2/l/KHIG4GOP3TWMC5YD7IKYZ5CQTH:/var/lib/docker/overlay2/l/6I7HXYXD56K4UELL2TBLQONO7P:/var/lib/docker/overlay2/l/NG3PYEJWS4DQSX7RS6UXDLVXV4,upperdir=/var/lib/docker/overlay2/0dc9e11caffe1f941a358b7ab0aade2cd7f1c532ca49dc65f9c3be729e42a43c/diff,workdir=/var/lib/docker/overlay2/0dc9e11caffe1f941a358b7ab0aade2cd7f1c532ca49dc65f9c3be729e42a43c/work,nouserxattr)
@@ -295,7 +295,7 @@ Great! Now we know that when we download a Docker image, we are downloading pre-
 
 Now if we remove the downloaded image 
 
-```
+```bash
 $ docker rm $(docker ps -aq)
 $ docker rmi registry.k8s.io/e2e-test-images/agnhost:2.39
 Untagged: registry.k8s.io/e2e-test-images/agnhost:2.39
@@ -315,7 +315,7 @@ Deleted: sha256:d80e0208345a5c0e0e5575f11f35d99a179bcdfec9a075828e774145c0245eb6
 
 Notice again that we are deleting the previously downloaded layers and if we look inside the `overlay2` directory under `/var/lib/docker` it should be empty, expect for the `l` which contains some kind of link, but since we don't have any images present on the machine it should be empty as well.
 
-```
+```bash
 $ ls /var/lib/docker/overlay2
 l
 
@@ -325,13 +325,13 @@ $ ls /var/lib/docker/overlay2/l/
 
 Now, lets download a simpler image with only one layer.
 
-```
+```bash
 docker pull ubuntu
 ```
 
 Now if we look inside the `overlay2` directory under `/var/lib/docker`
 
-```
+```bash
 $ ls overlay2/13fed57b58b2e355399d33ab2c87b75249c9e35ec85bb333bf295d3191cf55e5/
 
 diff  link
@@ -348,7 +348,7 @@ Now, the question is how do we restrict what the container can and cannot see ? 
 
 Namespaces are part of the Linux kernel for years and allow you to create your own namespace for various resources. If we look at the help manual of the `unshare` command on linux
 
-```
+```bash
 $ unshare -h
 
 Usage:
@@ -372,7 +372,7 @@ It lists all the supported namespaces that we can create and then move our "cont
 
 But there is more, how does networking work with docker? Lets run the downloaded ubuntu image and install the `iproute2` package and list the available interfaces inside the container.
 
-```
+```bash
 $ docker run -it ubuntu
 root@9ccbe8351f81:/# apt update && apt install iproute2 && ip a
 
@@ -393,7 +393,7 @@ root@9ccbe8351f81:/# apt update && apt install iproute2 && ip a
 
 It looks like Docker created a `veth` in the namespace of the running container, but since `veths` are created in pairs (think of them as a virtual ethernet cable connecting two endpoints), the other end of the `veth` must be in a different namespace. If we look at the interfaces on the host
 
-```
+```bash
 $ ip a
 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
@@ -428,7 +428,7 @@ We will find the other matching `veth` called `veth3060149@if33`, but not only t
 
 If we look again inside the container at the routes 
 
-```
+```bash
 $ ip route
 default via 172.17.0.1 dev eth0 
 172.17.0.0/16 dev eth0 proto kernel scope link src 172.17.0.2
@@ -436,7 +436,7 @@ default via 172.17.0.1 dev eth0
 
 and at the route on the host
 
-```
+```bash
 $ ip route
 default via 192.168.72.1 dev enp0s1 proto dhcp metric 100 
 169.254.0.0/16 dev enp0s1 scope link metric 1000 
@@ -502,5 +502,40 @@ What we are going to build is an API similar to the `docker run -it ubuntu` whic
 
 The goal is simply to become more familiar with what Docker is under the hood. The code is made available on [github](https://github.com/Despire/playground/tree/ffcfb21a273ad44f1f669fd102cd68be131ea04a/tinycontainer). The container is implemented in roughly 360 lines of Go code which consists of the above mentioned principles used in containers.
 
-For the rest of this article we will first show how to try the container and the briefly explain what each section of code does.
+For the rest of this article we will first show how to run the container and then briefly explain what each section of code does.
 
+From this point, I'm under the assumption that there are no running docker containers on your system nor any images are downloaded.
+To start, lets download the github repository with `git clone git@github.com:Despire/playground.git` and exec into the `tinycontainer` directory inside it and initialize it with `make`.
+
+```bash
+$ cd ./playground/tinycontainer
+$ make
+```
+
+Next download the ubuntu image with `docker pull ubuntu` and move the contents of the downloaded image layer from `/var/lib/docker/overlay2/ddafbc0ad29c2940a9aff6bd56fddb8c1f380e0c7673c64a310cf430ba40bbd0/diff/` into `./overlay/image/`
+
+```bash
+$ cp -r /var/lib/docker/overlay2/ddafbc0ad29c2940a9aff6bd56fddb8c1f380e0c7673c64a310cf430ba40bbd0/diff/* ./overlay/image/
+```
+**NOTE**: The hash may be completely different for you, thus you need to check for yourself.
+
+Build the program and run it
+
+```bash
+go build .
+./container run bash
+```
+
+You should have a working shell that is inside the container. The abilities within it are very limited but you can check that the network is working with
+
+```bash
+getent hosts www.google.com
+
+2a00:1450:4014:80e::2004 www.google.com
+```
+
+While the network connection is working, you will not be able to run `apt update` or install any packages. This is because the mounted overlay filesystem is not complete, for example there are no devices in `/dev'. But as I said, that was not the goal of this article. The goal was to set up a tiny workable container, and that's what we did, anything else would start to go into the robustness of the container implementation, which is out of scope.
+
+Below is also an asciinema video going through the invididual steps.
+
+<script src="https://asciinema.org/a/da2fhZFKe8OMF7lQ9LiYRT7sO.js" id="asciicast-da2fhZFKe8OMF7lQ9LiYRT7sO" async></script>
