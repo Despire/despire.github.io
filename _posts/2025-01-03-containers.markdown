@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Containers, What are they ?"
-date: 2025-01-02
+date: 2025-01-03
 categories: [Tech]
 ---
 
@@ -18,14 +18,15 @@ These two concepts are illustrated in the figure below, where a traditional virt
 
 ![alt text](/assets/img/containers/vm.png)
 
-Okay, great, now that we have the high-level descriptions of what containers are, what are they really? I mean, what do they use to achieve this per-application isolation? Well, let's dive into a Docker container runtime and try to reverse engineer to see what's being done to achieve that.
+Okay, great, now that we have the high-level descriptions of what containers are, what are they really? I mean, what do they use to achieve this per-application isolation? Well, let's dive into a container runtime, Docker, and try to reverse engineer to see what's being done to achieve that.
 
 There is a great video by Liz Race from [GOTO 2018](https://www.youtube.com/watch?v=8fi7uSYlOdc) where she goes through the very basics of what containers are. Mostly I'm going to scratch the same surface, but I'll also try to add more things to get a bigger picture.
 
 We'll be using [Docker](https://www.docker.com/) as the container runtime. I highly recommend that you run the examples in the following sections on a completely new virtual machine running Linux, as we will be running commands with privileges and you don't want to accidentally destroy your environment.
 
 Lets start by downloading an image with `docker pull` 
-**NOTE**: all of the examples are done on a fresh VM just docker installed.
+
+**NOTE**: all of the examples are done on a fresh VM with just docker installed.
 
 ```bash
 $ docker pull registry.k8s.io/e2e-test-images/agnhost:2.39
@@ -242,10 +243,13 @@ $ ls ./image/overlay2/layerdb/sha256/1c7a1bab7d8e974b098055c75576325d0850b1752a3
 cache-id  diff  parent  size  tar-split.json.gz
 
 ```
-There are a bunch of hashes inside each of these files if you would dump them via `cat` and it you would then grep these hashes there is one that stands out and is stored inside the `cache-id` file
+There are a bunch of hashes inside each of these files if you would dump them via `cat` and you would then grep these hashes there is one that stands out and is stored inside the `cache-id` file
 
 
 which in my case is
+
+**NOTE**: I don't actually know where any of these are used, we're just trying to follow some paths to learn.
+
 ```bash
 $ cat ./image/overlay2/layerdb/sha256/1c7a1bab7d8e974b098055c75576325d0850b1752a390f5ebdfa198902a55a00/cache-id 
 
@@ -260,7 +264,7 @@ $ ls overlay2/5bf06ed7a43fa779b3c6d6162fc22c8a88540d210cf24106ee1e7f4125cdf035/
 committed  diff  link  lower  work
 ```
 
-Now, depending on how familiar you are with Linux, there are already hints as to what these "layers" actually are. They are a pseudo filesystem built using the `overlay` mount, these hints are also in the file path of the respective files.
+Now, depending on how familiar you are with Linux, there are already hints as to what these "layers" actually are, or rather what they are used for. They seem to serve as the base of a pseudo filesystem using the `overlay` mount, these hints are also in the file path of the respective files.
 
 Again, I don't know any of the internals of Docker, so everything I'm doing is just trying to reverse engineer the bigger picture of how containers work.
 
@@ -289,7 +293,7 @@ overlay on /var/lib/docker/overlay2/0dc9e11caffe1f941a358b7ab0aade2cd7f1c532ca49
 
 ```
 
-From the output you can see where the `merged` view is stored, the `lower` layer and the `upper` layer. If you then execute inside the container and look at the contents of these directories, they should match (note that the `lower' layer seems to be a bunch of links that you would have to follow to get to the actual `lower' layer being used).
+From the output you can see where the `merged` view is stored, the `lower` layer and the `upper` layer. If you then execute inside the container and look at the contents of these directories, they should match (note that the `lower` layer seems to be a bunch of links that you would have to follow to get to the actual `lower` layer being used).
 
 Great! Now we know that when we download a Docker image, we are downloading pre-built layers that will be mounted when the image is transformed into a container.
 
@@ -654,8 +658,8 @@ func interact(args []string) error {
 ```
 
 The above code example has two functions, `prepare` and `interact`. The former sets up the namespaces and the
-filesystem for the container and proceeds to run itself under these new namespaces, where it then sets up the container environment by
-then sets up the container environment by changing the hostname, setting the chroot, and mounting relevant files/directories.
+filesystem for the container and proceeds to run itself under these new namespaces, where it then then sets up the container environment
+by changing the hostname, setting the chroot, and mounting relevant files/directories.
 
 Creating the overlay filesystem is a simple syscall
 
@@ -851,5 +855,3 @@ nameserver 192.168.72.1
 search .
 `
 ```
-
-However, if you were to query some domains with the `getent` binary, you would be able to resolve them. For example, if you tried to install new packages or do an `apt update`, it would fail. This is because some of the directories under the overlay filesystem are missing some links to the host OS. For example, the `/dev` directory is completely empty. Making this work would require adding more robustness and useability into the code.
